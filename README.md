@@ -15,6 +15,15 @@ Currently only streaming of response is supported. If you need also streaming of
 pip install git+https://github.com/gkorepanov/whisper-stream.git
 ```
 
+
+## CLI usage
+To transcribe a file, run the following command:
+```bash
+python -m whisperstream /path/to/your/audio/file.ogg -l en
+```
+You can omit the language parameter, it will be detected automatically.
+
+
 ## Usage
 
 ```python
@@ -29,3 +38,4 @@ async for segment in gen:
     # segment is an OpenAI Python API object
     # it has `start`, `end`, `text` attributes
     print(segment.text, end="")
+```
