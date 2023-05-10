@@ -1,4 +1,4 @@
-# WhisperStream
+# Whisper API Streaming
 
 OpenAI has recently [published](https://platform.openai.com/docs/api-reference/audio/create) their Whisper model API for audio transcription.
 
