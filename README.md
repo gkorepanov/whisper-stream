@@ -19,7 +19,7 @@ pip install git+https://github.com/gkorepanov/whisper-stream.git
 ## CLI usage
 To transcribe a file, run the following command:
 ```bash
-python -m whisperstream /path/to/your/audio/file.ogg -l en
+OPENAI_API_KEY=<KEY> whisperstream /path/to/your/audio/file.ogg -l en
 ```
 You can omit the language parameter, it will be detected automatically.
 
