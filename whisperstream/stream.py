@@ -142,7 +142,7 @@ async def atranscribe_streaming(
         segment.export(f, format="mp3")
         f.seek(0)
         logger.debug(f"Transcribe request with start = {start} end = {end}")
-        r = await default_atranscribe_fn(
+        r = await atranscribe_fn(
             model=model,
             file=f,
             duration_seconds=(end - start) / 1000,
