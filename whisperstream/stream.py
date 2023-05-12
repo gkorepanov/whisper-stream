@@ -1,4 +1,4 @@
-from typing import Tuple, AsyncIterator, Callable
+from typing import Tuple, AsyncIterator, Callable, BinaryIO
 import os
 from io import BytesIO
 import logging
@@ -29,11 +29,26 @@ def default_chunk_size_fn(index: int) -> int:
     return OPENAI_WHISPER_MODEL_CHUNK_SIZE_SECONDS * factor
 
 
+async def default_atranscribe_fn(
+    model: str,
+    file: BinaryIO,
+    duration_seconds: float,
+    *args,
+    **kwargs,
+):
+    return await openai.Audio.atranscribe(
+        model=model,
+        file=file,
+        *args,
+        **kwargs,
+    )
+
+
 async def atranscribe_streaming_simple(
     path: os.PathLike,
     model: str = 'whisper-1',
     chunk_size_fn: Callable[[int], int] = default_chunk_size_fn,
-    atranscribe_fn: Callable[..., OpenAIObject] = openai.Audio.atranscribe,
+    atranscribe_fn: Callable[..., OpenAIObject] = default_atranscribe_fn,
     **kwargs,
 ) -> Tuple[Lang, AsyncIterator[OpenAIObject]]:
     """High level wrapper for streaming tracription with simple interface.
@@ -47,7 +62,7 @@ async def atranscribe_streaming_simple(
             reduce the number of requests to the OpenAI API and improve
             overall latency. Defaults to `default_chunk_size_fn`.
         atranscribe_fn (Callable[..., OpenAIObject], optional): function
-            to use for transcription. Defaults to `openai.Audio.atranscribe`.
+            to use for transcription. Defaults to `default_atranscribe_fn`.
             You can pass a custom function to use a different API or add
             custom retry logic.
         kwargs: Additional arguments for OpenAI API
@@ -85,7 +100,7 @@ async def atranscribe_streaming(
     path: os.PathLike,
     model: str = 'whisper-1',
     chunk_size_fn: Callable[[int], int] = default_chunk_size_fn,
-    atranscribe_fn: Callable[..., OpenAIObject] = openai.Audio.atranscribe,
+    atranscribe_fn: Callable[..., OpenAIObject] = default_atranscribe_fn,
     **kwargs,
 ) -> AsyncIterator[OpenAIObject]:
     """Low level OpenAI Whisper API wrapper for streaming transcription.
@@ -99,7 +114,7 @@ async def atranscribe_streaming(
             reduce the number of requests to the OpenAI API and improve
             overall latency. Defaults to `default_chunk_size_fn`.
         atranscribe_fn (Callable[..., OpenAIObject], optional): function
-            to use for transcription. Defaults to `openai.Audio.atranscribe`.
+            to use for transcription. Defaults to `default_atranscribe_fn`.
             You can pass a custom function to use a different API or add
             custom retry logic.
         kwargs: Additional arguments for OpenAI API
@@ -123,14 +138,14 @@ async def atranscribe_streaming(
         segment.export(f, format="mp3")
         f.seek(0)
         logger.debug(f"Transcribe request with start = {start} end = {end}")
-        r = await atranscribe_fn(
-            model,
-            f,
+        r = await default_atranscribe_fn(
+            model=model,
+            file=f,
+            duration_seconds=(end - start) / 1000,
             **kwargs,
         )
         logger.debug("Transcribe request finished")
         return r
-
 
     total_len = len(audio)
     logger.debug(f"Audio len: {total_len}")
