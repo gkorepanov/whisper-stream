@@ -86,7 +86,11 @@ async def atranscribe_streaming_simple(
     )
     it = gen.__aiter__()
     first_elem = await it.__anext__()
-    first_elem.segments[0].text = first_elem.segments[0].text.lstrip()
+
+    # remove leading spaces from first segment
+    if len(first_elem.segments) > 0:
+        first_elem.segments[0].text = first_elem.segments[0].text.lstrip()
+
     async def _gen():
         for segment in first_elem.segments:
             yield segment
