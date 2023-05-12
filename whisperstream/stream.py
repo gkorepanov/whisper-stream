@@ -1,4 +1,4 @@
-from typing import Tuple, AsyncIterator
+from typing import Tuple, AsyncIterator, Callable
 import os
 from io import BytesIO
 import logging
@@ -12,12 +12,28 @@ import pydub
 logger = logging.getLogger(__name__)
 
 
+# the whisper model inference uses 30 seconds of audio at a time
+# so using chunks of smaller size is useless because they will be padded
 OPENAI_WHISPER_MODEL_CHUNK_SIZE_SECONDS = 30
+
+
+
+def default_chunk_size_fn(index: int) -> int:
+    """Convert chunk index to chunk size in seconds.
+    
+    In the simplest case, the chunk size is constantly 30 seconds, but it can be
+    increased for each chunk to reduce the number of requests to
+    the OpenAI API.
+    """
+    factor = 1 if index < 2 else index  # speed up first chunks
+    return OPENAI_WHISPER_MODEL_CHUNK_SIZE_SECONDS * factor
 
 
 async def atranscribe_streaming_simple(
     path: os.PathLike,
     model: str = 'whisper-1',
+    chunk_size_fn: Callable[[int], int] = default_chunk_size_fn,
+    atranscribe_fn: Callable[..., OpenAIObject] = openai.Audio.atranscribe,
     **kwargs,
 ) -> Tuple[Lang, AsyncIterator[OpenAIObject]]:
     """High level wrapper for streaming tracription with simple interface.
@@ -25,6 +41,15 @@ async def atranscribe_streaming_simple(
     Args:
         path (os.PathLike): Path to audio file
         model (str, optional): OpenAI model name. Defaults to 'whisper-1'.
+        chunk_size_fn (Callable[[int], int], optional): Determines
+            chunk size in seconds for each chunk. For fastest streaming, it should
+            return a constant value, but it can be increased for each chunk to
+            reduce the number of requests to the OpenAI API and improve
+            overall latency. Defaults to `default_chunk_size_fn`.
+        atranscribe_fn (Callable[..., OpenAIObject], optional): function
+            to use for transcription. Defaults to `openai.Audio.atranscribe`.
+            You can pass a custom function to use a different API or add
+            custom retry logic.
         kwargs: Additional arguments for OpenAI API
 
     Returns:
@@ -37,7 +62,13 @@ async def atranscribe_streaming_simple(
         >>> async for segment in segments:
         >>>     print(segment.text)
     """
-    gen = atranscribe_streaming(path, model, **kwargs)
+    gen = atranscribe_streaming(
+        path=path,
+        model=model,
+        chunk_size_fn=chunk_size_fn,
+        atranscribe_fn=atranscribe_fn,
+        **kwargs,
+    )
     it = gen.__aiter__()
     first_elem = await it.__anext__()
     first_elem.segments[0].text = first_elem.segments[0].text.lstrip()
@@ -53,6 +84,8 @@ async def atranscribe_streaming_simple(
 async def atranscribe_streaming(
     path: os.PathLike,
     model: str = 'whisper-1',
+    chunk_size_fn: Callable[[int], int] = default_chunk_size_fn,
+    atranscribe_fn: Callable[..., OpenAIObject] = openai.Audio.atranscribe,
     **kwargs,
 ) -> AsyncIterator[OpenAIObject]:
     """Low level OpenAI Whisper API wrapper for streaming transcription.
@@ -60,6 +93,15 @@ async def atranscribe_streaming(
     Args:
         path (os.PathLike): Path to audio file
         model (str, optional): OpenAI model name. Defaults to 'whisper-1'.
+        chunk_size_fn (Callable[[int], int], optional): Determines
+            chunk size in seconds for each chunk. For fastest streaming, it should
+            return a constant value, but it can be increased for each chunk to
+            reduce the number of requests to the OpenAI API and improve
+            overall latency. Defaults to `default_chunk_size_fn`.
+        atranscribe_fn (Callable[..., OpenAIObject], optional): function
+            to use for transcription. Defaults to `openai.Audio.atranscribe`.
+            You can pass a custom function to use a different API or add
+            custom retry logic.
         kwargs: Additional arguments for OpenAI API
     
     Returns:
@@ -73,19 +115,15 @@ async def atranscribe_streaming(
     path = Path(path)
     audio = pydub.AudioSegment.from_file(str(path))
 
-    # the whisper model inference uses 30 seconds of audio at a time
-    # so using chunks of smaller size is useless because it will be padded
-    chunk_size = OPENAI_WHISPER_MODEL_CHUNK_SIZE_SECONDS * 1000
-
-    async def _transcribe(start: int):
+    async def _transcribe(start: int, end: int):
         logger.debug("Crop audio")
-        segment = audio[start:start+chunk_size]
+        segment = audio[start:end]
         f = BytesIO()
         f.name = "voice.mp3"
         segment.export(f, format="mp3")
         f.seek(0)
-        logger.debug(f"Transcribe request with start = {start}")
-        r = await openai.Audio.atranscribe(
+        logger.debug(f"Transcribe request with start = {start} end = {end}")
+        r = await atranscribe_fn(
             model,
             f,
             **kwargs,
@@ -97,7 +135,9 @@ async def atranscribe_streaming(
     total_len = len(audio)
     logger.debug(f"Audio len: {total_len}")
     start = 0
-    r = await _transcribe(start)
+    chunk_index = 0
+    end = start + int(chunk_size_fn(chunk_index) * 1000)
+    r = await _transcribe(start, end)
     kwargs['language'] = Lang(r.language.capitalize()).pt1
     
     while True:
@@ -109,19 +149,19 @@ async def atranscribe_streaming(
 
         # if we are at the end of the audio, return all segments
         # returned by OpenAI
-        if start + chunk_size >= total_len:
+        if end >= total_len:
             yield r
             return
 
         # if only one segment was returned, we have to continue
         # transcription from the end of the segment
         if len(r.segments) == 1:
-            start += chunk_size
+            start = end
         else:  
             # if more than one segment was returned, we discard the last incomplete one
             # and continue transcription from the end of the second to last
             r.segments = r.segments[:-1]
-            assert r.segments[-1].end < (start + chunk_size / 1000)
+            assert r.segments[-1].end < (end / 1000)
             start = int(r.segments[-1].end * 1000)
             r.text = ''.join(x.text for x in r.segments)
 
@@ -130,5 +170,6 @@ async def atranscribe_streaming(
         kwargs["prompt"] = kwargs.get("prompt", "") + r.text
 
         yield r
-
-        r = await _transcribe(start)
+        chunk_index += 1
+        end = start + int(chunk_size_fn(chunk_index) * 1000)
+        r = await _transcribe(start, end)
