@@ -174,13 +174,26 @@ async def atranscribe_streaming(
 
         # if only one segment was returned, we have to continue
         # transcription from the end of the segment
-        if len(r.segments) == 1:
+        if len(r.segments) == 0:
+            logger.debug(f"No segments returned for start = {start} end = {end}")
             start = end
-        else:  
+        elif len(r.segments) == 1:
+            logger.debug(f"1 segment returned for start = {start} end = {end}")
+            start = end
+        else:
+            logger.debug(f"{len(r.segments)} segments returned for start = {start} end = {end}")
             # if more than one segment was returned, we discard the last incomplete one
             # and continue transcription from the end of the second to last
-            r.segments = r.segments[:-1]
-            assert r.segments[-1].end < (end / 1000)
+            max_segments_to_skip = min(
+                4, len(r.segments) - 1
+            )
+            for _ in range(max_segments_to_skip):
+                logger.debug("Skipping segment")
+                r.segments = r.segments[:-1]
+                if (r.segments[-1].end < (end / 1000)):
+                    break
+            else:
+                raise ValueError(f"Segment end is greater than chunk end even after discarding {max_segments_to_skip} segments")
             start = int(r.segments[-1].end * 1000)
             r.text = ''.join(x.text for x in r.segments)
 
