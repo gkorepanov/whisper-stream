@@ -1,4 +1,4 @@
-from typing import Tuple, AsyncIterator, Callable, BinaryIO
+from typing import Tuple, AsyncIterator, Callable, BinaryIO, Optional
 import os
 from io import BytesIO
 import logging
@@ -7,6 +7,12 @@ import openai
 from openai.openai_object import OpenAIObject
 from pathlib import Path
 import pydub
+
+from whisperstream.languages import (
+    get_lang_from_name,
+    get_lang_name,
+    SUPPORTED_LANGUAGES,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -49,6 +55,7 @@ async def atranscribe_streaming_simple(
     model: str = 'whisper-1',
     chunk_size_fn: Callable[[int], int] = default_chunk_size_fn,
     atranscribe_fn: Callable[..., OpenAIObject] = default_atranscribe_fn,
+    language: Optional[Lang] = None,
     **kwargs,
 ) -> Tuple[Lang, AsyncIterator[OpenAIObject]]:
     """High level wrapper for streaming tracription with simple interface.
@@ -65,6 +72,8 @@ async def atranscribe_streaming_simple(
             to use for transcription. Defaults to `default_atranscribe_fn`.
             You can pass a custom function to use a different API or add
             custom retry logic.
+        language (Optional[Lang], optional): Language of the audio. If not
+            specified, it will be detected automatically. Defaults to None.
         kwargs: Additional arguments for OpenAI API
 
     Returns:
@@ -82,6 +91,7 @@ async def atranscribe_streaming_simple(
         model=model,
         chunk_size_fn=chunk_size_fn,
         atranscribe_fn=atranscribe_fn,
+        language=language,
         **kwargs,
     )
     it = gen.__aiter__()
@@ -97,7 +107,8 @@ async def atranscribe_streaming_simple(
         async for elem in it:
             for segment in elem.segments: 
                 yield segment
-    return Lang(first_elem.language.capitalize()), _gen()
+
+    return get_lang_from_name(first_elem.language), _gen()
 
 
 async def atranscribe_streaming(
@@ -105,6 +116,7 @@ async def atranscribe_streaming(
     model: str = 'whisper-1',
     chunk_size_fn: Callable[[int], int] = default_chunk_size_fn,
     atranscribe_fn: Callable[..., OpenAIObject] = default_atranscribe_fn,
+    language: Optional[Lang] = None,
     **kwargs,
 ) -> AsyncIterator[OpenAIObject]:
     """Low level OpenAI Whisper API wrapper for streaming transcription.
@@ -121,6 +133,8 @@ async def atranscribe_streaming(
             to use for transcription. Defaults to `default_atranscribe_fn`.
             You can pass a custom function to use a different API or add
             custom retry logic.
+        language (Optional[Lang], optional): Language of the audio. If not
+            specified, it will be detected automatically. Defaults to None.
         kwargs: Additional arguments for OpenAI API
     
     Returns:
@@ -130,6 +144,10 @@ async def atranscribe_streaming(
 
     # force "verbose_json" response format to get segments
     kwargs["response_format"] = "verbose_json"
+
+    if language is not None:
+        assert language in SUPPORTED_LANGUAGES, f"Language {language} is not supported"
+        kwargs["language"] = language.pt1
 
     path = Path(path)
     audio = pydub.AudioSegment.from_file(str(path))
@@ -157,7 +175,8 @@ async def atranscribe_streaming(
     chunk_index = 0
     end = start + int(chunk_size_fn(chunk_index) * 1000)
     r = await _transcribe(start, end)
-    kwargs['language'] = Lang(r.language.capitalize()).pt1
+    if language is None:
+        kwargs['language'] = get_lang_from_name(r.language).pt1
     
     while True:
         # update seek and start/end times in all segments
@@ -170,6 +189,7 @@ async def atranscribe_streaming(
         # returned by OpenAI
         if end >= total_len:
             yield r
+            logger.debug(f"End of audio, yield text: {r.text}")
             return
 
         # if only one segment was returned, we have to continue
@@ -185,13 +205,21 @@ async def atranscribe_streaming(
             # if more than one segment was returned, we discard the last incomplete one
             # and continue transcription from the end of the second to last
             max_segments_to_skip = min(
-                4, len(r.segments) - 1
+                1, len(r.segments) - 1
             )
             for _ in range(max_segments_to_skip):
                 logger.debug("Skipping segment")
                 r.segments = r.segments[:-1]
                 if (r.segments[-1].end < (end / 1000)):
                     break
+                else:
+                    logger.debug("Strange segment end, skipping another segment")
+                    logger.debug(f"Segment end: {r.segments[-1].end}")
+                    for segment in r.segments:
+                        logger.debug(f"text: {segment.text}")
+                        logger.debug(f"start: {start}")
+                        logger.debug(f"end: {end}")
+                        logger.debug(f"{segment}")
             else:
                 raise ValueError(f"Segment end is greater than chunk end even after discarding {max_segments_to_skip} segments")
             start = int(r.segments[-1].end * 1000)
@@ -202,6 +230,8 @@ async def atranscribe_streaming(
         kwargs["prompt"] = kwargs.get("prompt", "") + r.text
 
         yield r
+        logger.debug(f"Yield text: {r.text}")
+
         chunk_index += 1
         end = start + int(chunk_size_fn(chunk_index) * 1000)
         r = await _transcribe(start, end)
