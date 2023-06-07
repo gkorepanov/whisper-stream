@@ -1,4 +1,5 @@
 from iso639 import Lang
+from whisperstream.error import UnsupportedLanguageError
 
 # langs from https://help.openai.com/en/articles/7031512-whisper-api-faq
 _WHISPER_LANGUAGES = [
@@ -73,4 +74,7 @@ def get_lang_name(lang: Lang) -> str:
 
 
 def get_lang_from_name(name: str) -> Lang:
-    return _NAME_TO_LANG[name.capitalize()]
+    try:
+        return _NAME_TO_LANG[name.capitalize()]
+    except KeyError:
+        raise UnsupportedLanguageError(f"Language {name} is not supported.")

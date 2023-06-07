@@ -13,6 +13,7 @@ from whisperstream.languages import (
     get_lang_name,
     SUPPORTED_LANGUAGES,
 )
+from whisperstream.error import UnsupportedLanguageError
 
 
 logger = logging.getLogger(__name__)
@@ -146,7 +147,8 @@ async def atranscribe_streaming(
     kwargs["response_format"] = "verbose_json"
 
     if language is not None:
-        assert language in SUPPORTED_LANGUAGES, f"Language {language} is not supported"
+        if language not in SUPPORTED_LANGUAGES:
+            raise UnsupportedLanguageError(f"Language {language} is not supported")
         kwargs["language"] = language.pt1
 
     path = Path(path)

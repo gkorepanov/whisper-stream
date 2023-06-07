@@ -1,0 +1,2 @@
+class UnsupportedLanguageError(ValueError):
+    pass
