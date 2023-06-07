@@ -204,7 +204,7 @@ async def atranscribe_streaming(
             logger.debug(f"{len(r.segments)} segments returned for start = {start} end = {end}")
             # if more than one segment was returned, we discard the last incomplete one
             # and continue transcription from the end of the second to last
-            max_segments_to_skip = min(
+            max_segments_to_skip = max(
                 1, len(r.segments) - 1
             )
             for _ in range(max_segments_to_skip):
