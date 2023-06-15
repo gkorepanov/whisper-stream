@@ -164,7 +164,7 @@ async def atranscribe_streaming(
         return pydub.AudioSegment.from_file(str(path))
     if executor is not None:
         loop = asyncio.get_running_loop()
-        audio = await loop.run_in_executor(executor, _f())
+        audio = await loop.run_in_executor(executor, _f)
     else:
         audio = _f()
 
@@ -181,7 +181,7 @@ async def atranscribe_streaming(
 
         if executor is not None:
             loop = asyncio.get_running_loop()
-            f = await loop.run_in_executor(executor, _f())
+            f = await loop.run_in_executor(executor, _f)
         else:
             f = _f()
 
