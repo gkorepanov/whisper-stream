@@ -7,6 +7,8 @@ import openai
 from openai.openai_object import OpenAIObject
 from pathlib import Path
 import pydub
+import asyncio
+from concurrent.futures import Executor
 
 from whisperstream.languages import (
     get_lang_from_name,
@@ -57,6 +59,7 @@ async def atranscribe_streaming_simple(
     chunk_size_fn: Callable[[int], int] = default_chunk_size_fn,
     atranscribe_fn: Callable[..., OpenAIObject] = default_atranscribe_fn,
     language: Optional[Lang] = None,
+    executor: Optional[Executor] = None,
     **kwargs,
 ) -> Tuple[Lang, AsyncIterator[OpenAIObject]]:
     """High level wrapper for streaming tracription with simple interface.
@@ -75,6 +78,7 @@ async def atranscribe_streaming_simple(
             custom retry logic.
         language (Optional[Lang], optional): Language of the audio. If not
             specified, it will be detected automatically. Defaults to None.
+        executor: (Optional[Executor], optional): Executor used to run blocking code.
         kwargs: Additional arguments for OpenAI API
 
     Returns:
@@ -93,6 +97,7 @@ async def atranscribe_streaming_simple(
         chunk_size_fn=chunk_size_fn,
         atranscribe_fn=atranscribe_fn,
         language=language,
+        executor=executor,
         **kwargs,
     )
     it = gen.__aiter__()
@@ -118,6 +123,7 @@ async def atranscribe_streaming(
     chunk_size_fn: Callable[[int], int] = default_chunk_size_fn,
     atranscribe_fn: Callable[..., OpenAIObject] = default_atranscribe_fn,
     language: Optional[Lang] = None,
+    executor: Optional[Executor] = None,
     **kwargs,
 ) -> AsyncIterator[OpenAIObject]:
     """Low level OpenAI Whisper API wrapper for streaming transcription.
@@ -136,6 +142,7 @@ async def atranscribe_streaming(
             custom retry logic.
         language (Optional[Lang], optional): Language of the audio. If not
             specified, it will be detected automatically. Defaults to None.
+        executor: (Optional[Executor], optional): Executor used to run blocking code.
         kwargs: Additional arguments for OpenAI API
     
     Returns:
@@ -152,15 +159,32 @@ async def atranscribe_streaming(
         kwargs["language"] = language.pt1
 
     path = Path(path)
-    audio = pydub.AudioSegment.from_file(str(path))
+
+    def _f():
+        return pydub.AudioSegment.from_file(str(path))
+    if executor is not None:
+        loop = asyncio.get_running_loop()
+        audio = await loop.run_in_executor(executor, _f())
+    else:
+        audio = _f()
 
     async def _transcribe(start: int, end: int):
         logger.debug("Crop audio")
-        segment = audio[start:end]
-        f = BytesIO()
-        f.name = "voice.mp3"
-        segment.export(f, format="mp3")
-        f.seek(0)
+
+        def _f():
+            f = BytesIO()
+            f.name = "voice.mp3"
+            segment = audio[start:end]
+            segment.export(f, format="mp3")
+            f.seek(0)
+            return f
+
+        if executor is not None:
+            loop = asyncio.get_running_loop()
+            f = await loop.run_in_executor(executor, _f())
+        else:
+            f = _f()
+
         logger.debug(f"Transcribe request with start = {start} end = {end}")
         r = await atranscribe_fn(
             model=model,
