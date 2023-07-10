@@ -197,9 +197,17 @@ async def atranscribe_streaming(
 
     total_len = len(audio)
     logger.debug(f"Audio len: {total_len}")
+
+    def _get_end(start: int, chunk_index: int) -> int:
+        chunk_size = int(chunk_size_fn(chunk_index) * 1000)
+        end = start + chunk_size
+        if (total_len - end) < chunk_size:  # do not make the last chunk too small
+            end = total_len
+        return end
+
     start = 0
     chunk_index = 0
-    end = start + int(chunk_size_fn(chunk_index) * 1000)
+    end = _get_end(start, chunk_index)
     r = await _transcribe(start, end)
     if language is None:
         kwargs['language'] = get_lang_from_name(r.language).pt1
@@ -259,9 +267,5 @@ async def atranscribe_streaming(
         logger.debug(f"Yield text: {r.text}")
 
         chunk_index += 1
-        chunk_size = int(chunk_size_fn(chunk_index) * 1000)
-        end = start + chunk_size
-        if total_len - end < chunk_size:  # do not make the last chunk too small
-            end = total_len
-
+        end = _get_end(start, chunk_index)
         r = await _transcribe(start, end)
