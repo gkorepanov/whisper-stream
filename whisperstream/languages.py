@@ -74,6 +74,8 @@ def get_lang_name(lang: Lang) -> str:
 
 
 def get_lang_from_name(name: str) -> Lang:
+    if not name:
+        raise UnsupportedLanguageError("Language name cannot be empty.")
     try:
         return _NAME_TO_LANG[name.capitalize()]
     except KeyError:
