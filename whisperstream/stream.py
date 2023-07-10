@@ -259,5 +259,9 @@ async def atranscribe_streaming(
         logger.debug(f"Yield text: {r.text}")
 
         chunk_index += 1
-        end = start + int(chunk_size_fn(chunk_index) * 1000)
+        chunk_size = int(chunk_size_fn(chunk_index) * 1000)
+        end = start + chunk_size
+        if total_len - end < chunk_size:  # do not make the last chunk too small
+            end = total_len
+
         r = await _transcribe(start, end)
