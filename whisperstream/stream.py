@@ -9,6 +9,7 @@ from pathlib import Path
 import pydub
 import asyncio
 from concurrent.futures import Executor
+from functools import partial
 
 from whisperstream.languages import (
     get_lang_from_name,
@@ -60,6 +61,7 @@ async def atranscribe_streaming_simple(
     atranscribe_fn: Callable[..., OpenAIObject] = default_atranscribe_fn,
     language: Optional[Lang] = None,
     executor: Optional[Executor] = None,
+    force_punctuation: bool = False,
     **kwargs,
 ) -> Tuple[Lang, AsyncIterator[OpenAIObject]]:
     """High level wrapper for streaming tracription with simple interface.
@@ -79,6 +81,7 @@ async def atranscribe_streaming_simple(
         language (Optional[Lang], optional): Language of the audio. If not
             specified, it will be detected automatically. Defaults to None.
         executor: (Optional[Executor], optional): Executor used to run blocking code.
+        force_punctuation: TODO
         kwargs: Additional arguments for OpenAI API
 
     Returns:
@@ -98,6 +101,7 @@ async def atranscribe_streaming_simple(
         atranscribe_fn=atranscribe_fn,
         language=language,
         executor=executor,
+        force_punctuation=force_punctuation,
         **kwargs,
     )
     it = gen.__aiter__()
@@ -124,6 +128,7 @@ async def atranscribe_streaming(
     atranscribe_fn: Callable[..., OpenAIObject] = default_atranscribe_fn,
     language: Optional[Lang] = None,
     executor: Optional[Executor] = None,
+    force_punctuation: bool = False,
     **kwargs,
 ) -> AsyncIterator[OpenAIObject]:
     """Low level OpenAI Whisper API wrapper for streaming transcription.
@@ -143,6 +148,7 @@ async def atranscribe_streaming(
         language (Optional[Lang], optional): Language of the audio. If not
             specified, it will be detected automatically. Defaults to None.
         executor: (Optional[Executor], optional): Executor used to run blocking code.
+        force_punctuation: TODO
         kwargs: Additional arguments for OpenAI API
     
     Returns:
@@ -158,6 +164,10 @@ async def atranscribe_streaming(
             raise UnsupportedLanguageError(f"Language {language} is not supported")
         kwargs["language"] = language.pt1
 
+    if force_punctuation:
+        if kwargs.get("prompt") is None:
+            raise ValueError("cannot set both prompt and force_punctuation")  # we do not know what to do TODO
+
     path = Path(path)
 
     def _f():
@@ -168,32 +178,14 @@ async def atranscribe_streaming(
     else:
         audio = _f()
 
-    async def _transcribe(start: int, end: int):
-        logger.debug("Crop audio")
-
-        def _f():
-            f = BytesIO()
-            f.name = "voice.mp3"
-            segment = audio[start:end]
-            segment.export(f, format="mp3")
-            f.seek(0)
-            return f
-
-        if executor is not None:
-            loop = asyncio.get_running_loop()
-            f = await loop.run_in_executor(executor, _f)
-        else:
-            f = _f()
-
-        logger.debug(f"Transcribe request with start = {start} end = {end}")
-        r = await atranscribe_fn(
-            model=model,
-            file=f,
-            duration_seconds=(end - start) / 1000,
-            **kwargs,
-        )
-        logger.debug("Transcribe request finished")
-        return r
+    __transcribe = partial(
+        _transcribe,
+        audio=audio,
+        executor=executor,
+        atranscribe_fn=atranscribe_fn,
+        model=model,
+        **kwargs,
+    )
 
     total_len = len(audio)
     logger.debug(f"Audio len: {total_len}")
@@ -208,10 +200,18 @@ async def atranscribe_streaming(
     start = 0
     chunk_index = 0
     end = _get_end(start, chunk_index)
-    r = await _transcribe(start, end)
+
+    if force_punctuation and language is not None:
+        kwargs["prompt"] = get_punctuation_prompt_for_lang(language)  # TODO
+
+    r = await __transcribe(start, end)
+
     if language is None:
         kwargs['language'] = get_lang_from_name(r.language).pt1
-    
+        if force_punctuation and not is_punctuation_present(r.text):
+            kwargs["prompt"] = get_punctuation_prompt_for_lang(language)
+            r = await __transcribe(start, end)
+
     while True:
         # update seek and start/end times in all segments
         for segment in r.segments:
@@ -268,4 +268,40 @@ async def atranscribe_streaming(
 
         chunk_index += 1
         end = _get_end(start, chunk_index)
-        r = await _transcribe(start, end)
+        r = await __transcribe(start, end)
+
+
+async def _transcribe(
+    audio: pydub.AudioSegment,
+    start: int,
+    end: int,
+    executor: Optional[Executor],
+    atranscribe_fn: Callable[..., OpenAIObject],
+    model: str,
+    **kwargs,
+) -> OpenAIObject:
+    logger.debug("Crop audio")
+
+    def _f():
+        f = BytesIO()
+        f.name = "voice.mp3"
+        segment = audio[start:end]
+        segment.export(f, format="mp3")
+        f.seek(0)
+        return f
+
+    if executor is not None:
+        loop = asyncio.get_running_loop()
+        f = await loop.run_in_executor(executor, _f)
+    else:
+        f = _f()
+
+    logger.debug(f"Transcribe request with start = {start} end = {end}")
+    r = await atranscribe_fn(
+        model=model,
+        file=f,
+        duration_seconds=(end - start) / 1000,
+        **kwargs,
+    )
+    logger.debug("Transcribe request finished")
+    return r
