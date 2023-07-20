@@ -10,7 +10,6 @@ import pydub
 import asyncio
 from concurrent.futures import Executor
 from functools import partial
-import string
 
 from whisperstream.languages import (
     get_punctuation_prompt_for_lang,
@@ -91,7 +90,8 @@ async def atranscribe_streaming_simple(
         language (Optional[Lang], optional): Language of the audio. If not
             specified, it will be detected automatically. Defaults to None.
         executor: (Optional[Executor], optional): Executor used to run blocking code.
-        force_punctuation: (bool): Locates rare cases of missed punctuation and forces it if necessary
+        force_punctuation: (bool): Locates rare cases of missed punctuation
+            and forces it if necessary
         kwargs: Additional arguments for OpenAI API
 
     Returns:
@@ -179,7 +179,7 @@ async def atranscribe_streaming(
 
     # in order to avoid conflicts you cannot use both prompt and force_punctuation
     if force_punctuation and kwargs.get("prompt") is not None:
-            raise ValueError("cannot set both prompt and force_punctuation")  # you cannot use both prompt and force_punctuation
+            raise ValueError("cannot set both prompt and force_punctuation")
 
     path = Path(path)
 
