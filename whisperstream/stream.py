@@ -12,6 +12,7 @@ from concurrent.futures import Executor
 from functools import partial
 
 from whisperstream.languages import (
+    get_punctuation_prompt_for_lang,
     get_lang_from_name,
     get_lang_name,
     SUPPORTED_LANGUAGES,
@@ -37,6 +38,13 @@ def default_chunk_size_fn(index: int) -> int:
     """
     factor = 1 if index < 2 else index  # speed up first chunks
     return OPENAI_WHISPER_MODEL_CHUNK_SIZE_SECONDS * factor
+
+
+def is_punctuation_present(text):
+    for i in text:
+        if i.isupper():
+            return True
+    return False
 
 
 async def default_atranscribe_fn(
@@ -81,7 +89,7 @@ async def atranscribe_streaming_simple(
         language (Optional[Lang], optional): Language of the audio. If not
             specified, it will be detected automatically. Defaults to None.
         executor: (Optional[Executor], optional): Executor used to run blocking code.
-        force_punctuation: TODO
+        force_punctuation: Locates rare cases of missed punctuation and forces it if necessary
         kwargs: Additional arguments for OpenAI API
 
     Returns:
@@ -107,6 +115,7 @@ async def atranscribe_streaming_simple(
     it = gen.__aiter__()
     first_elem = await it.__anext__()
 
+
     # remove leading spaces from first segment
     if len(first_elem.segments) > 0:
         first_elem.segments[0].text = first_elem.segments[0].text.lstrip()
@@ -117,6 +126,7 @@ async def atranscribe_streaming_simple(
         async for elem in it:
             for segment in elem.segments: 
                 yield segment
+    
 
     return get_lang_from_name(first_elem.language), _gen()
 
@@ -148,7 +158,7 @@ async def atranscribe_streaming(
         language (Optional[Lang], optional): Language of the audio. If not
             specified, it will be detected automatically. Defaults to None.
         executor: (Optional[Executor], optional): Executor used to run blocking code.
-        force_punctuation: TODO
+        force_punctuation: Locates rare cases of missed punctuation and forces it if necessary
         kwargs: Additional arguments for OpenAI API
     
     Returns:
@@ -165,8 +175,10 @@ async def atranscribe_streaming(
         kwargs["language"] = language.pt1
 
     if force_punctuation:
-        if kwargs.get("prompt") is None:
-            raise ValueError("cannot set both prompt and force_punctuation")  # we do not know what to do TODO
+        if kwargs.get("prompt") is not None:  # checking if user added initial prompt
+            initial_prompt = kwargs.get("prompt")
+        else:
+             initial_prompt = ""
 
     path = Path(path)
 
@@ -200,17 +212,18 @@ async def atranscribe_streaming(
     start = 0
     chunk_index = 0
     end = _get_end(start, chunk_index)
-
+    
     if force_punctuation and language is not None:
-        kwargs["prompt"] = get_punctuation_prompt_for_lang(language)  # TODO
+        kwargs["prompt"] = get_punctuation_prompt_for_lang(language.pt1)
 
-    r = await __transcribe(start, end)
-
+    r = await __transcribe(start=start, end=end)
+    
     if language is None:
-        kwargs['language'] = get_lang_from_name(r.language).pt1
+        language = get_lang_from_name(r.language)
+        kwargs['language'] = language.pt1
         if force_punctuation and not is_punctuation_present(r.text):
-            kwargs["prompt"] = get_punctuation_prompt_for_lang(language)
-            r = await __transcribe(start, end)
+            kwargs["prompt"] = get_punctuation_prompt_for_lang(language.pt1) + initial_prompt
+            r = await __transcribe(start=start, end=end, **kwargs)
 
     while True:
         # update seek and start/end times in all segments
@@ -268,10 +281,11 @@ async def atranscribe_streaming(
 
         chunk_index += 1
         end = _get_end(start, chunk_index)
-        r = await __transcribe(start, end)
+        r = await __transcribe(start=start, end=end)
 
 
 async def _transcribe(
+    *,
     audio: pydub.AudioSegment,
     start: int,
     end: int,
