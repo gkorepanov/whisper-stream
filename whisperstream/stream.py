@@ -10,6 +10,7 @@ import pydub
 import asyncio
 from concurrent.futures import Executor
 from functools import partial
+import string
 
 from whisperstream.languages import (
     get_punctuation_prompt_for_lang,
@@ -40,11 +41,12 @@ def default_chunk_size_fn(index: int) -> int:
     return OPENAI_WHISPER_MODEL_CHUNK_SIZE_SECONDS * factor
 
 
-def is_punctuation_present(text):
-    for i in text:
-        if i.isupper():
-            return True
-    return False
+def is_punctuation_present(text: str):
+    if not any(i.isupper() for i in text):
+        return False
+    if not any(i in "!(),.:;?" for i in text):
+        return False
+    return True
 
 
 async def default_atranscribe_fn(
@@ -89,7 +91,7 @@ async def atranscribe_streaming_simple(
         language (Optional[Lang], optional): Language of the audio. If not
             specified, it will be detected automatically. Defaults to None.
         executor: (Optional[Executor], optional): Executor used to run blocking code.
-        force_punctuation: Locates rare cases of missed punctuation and forces it if necessary
+        force_punctuation: (bool): Locates rare cases of missed punctuation and forces it if necessary
         kwargs: Additional arguments for OpenAI API
 
     Returns:
@@ -158,7 +160,8 @@ async def atranscribe_streaming(
         language (Optional[Lang], optional): Language of the audio. If not
             specified, it will be detected automatically. Defaults to None.
         executor: (Optional[Executor], optional): Executor used to run blocking code.
-        force_punctuation: Locates rare cases of missed punctuation and forces it if necessary
+        force_punctuation: (bool): Locates rare cases of missed punctuation
+            and forces it if necessary.
         kwargs: Additional arguments for OpenAI API
     
     Returns:
@@ -174,11 +177,9 @@ async def atranscribe_streaming(
             raise UnsupportedLanguageError(f"Language {language} is not supported")
         kwargs["language"] = language.pt1
 
-    if force_punctuation:
-        if kwargs.get("prompt") is not None:  # checking if user added initial prompt
-            initial_prompt = kwargs.get("prompt")
-        else:
-             initial_prompt = ""
+    # in order to avoid conflicts you cannot use both prompt and force_punctuation
+    if force_punctuation and kwargs.get("prompt") is not None:
+            raise ValueError("cannot set both prompt and force_punctuation")  # you cannot use both prompt and force_punctuation
 
     path = Path(path)
 
@@ -222,7 +223,7 @@ async def atranscribe_streaming(
         language = get_lang_from_name(r.language)
         kwargs['language'] = language.pt1
         if force_punctuation and not is_punctuation_present(r.text):
-            kwargs["prompt"] = get_punctuation_prompt_for_lang(language.pt1) + initial_prompt
+            kwargs["prompt"] = get_punctuation_prompt_for_lang(language.pt1)
             r = await __transcribe(start=start, end=end, **kwargs)
 
     while True:
@@ -281,7 +282,7 @@ async def atranscribe_streaming(
 
         chunk_index += 1
         end = _get_end(start, chunk_index)
-        r = await __transcribe(start=start, end=end)
+        r = await __transcribe(start=start, end=end, **kwargs)
 
 
 async def _transcribe(
