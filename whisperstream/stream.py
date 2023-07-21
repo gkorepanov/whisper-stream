@@ -40,7 +40,7 @@ def default_chunk_size_fn(index: int) -> int:
     return OPENAI_WHISPER_MODEL_CHUNK_SIZE_SECONDS * factor
 
 
-def is_punctuation_present(text: str):
+def is_punctuation_present(text: str) -> bool:
     if not any(i.isupper() for i in text):
         return False
     if not any(i in "!(),.:;?" for i in text):
