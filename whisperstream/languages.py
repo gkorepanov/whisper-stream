@@ -143,4 +143,4 @@ PUNCTUATION_PROMPTS_BY_LANG = {
 }
 
 def get_punctuation_prompt_for_lang(lang: Lang) -> str:
-    return PUNCTUATION_PROMPTS_BY_LANG[lang]
+    return PUNCTUATION_PROMPTS_BY_LANG[lang.pt1]
