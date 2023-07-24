@@ -224,6 +224,10 @@ async def atranscribe_streaming(
         language = get_lang_from_name(r.language)
         kwargs['language'] = language.pt1
         if force_punctuation and not is_punctuation_present(r.text):
+            logger.info(
+                "Punctuation is not present, adding "
+                "prefix to force punctuation"
+            )
             kwargs["prompt"] = get_punctuation_prompt_for_lang(language)
             r = await __transcribe(start=start, end=end, **kwargs)
 
@@ -270,7 +274,10 @@ async def atranscribe_streaming(
                         logger.debug(f"end: {end}")
                         logger.debug(f"{segment}")
             else:
-                raise ValueError(f"Segment end is greater than chunk end even after discarding {max_segments_to_skip} segments")
+                raise ValueError(
+                    f"Segment end is greater than chunk end even after "
+                    f"discarding {max_segments_to_skip} segments"
+                )
             start = int(r.segments[-1].end * 1000)
             r.text = ''.join(x.text for x in r.segments)
 
