@@ -61,13 +61,11 @@ def get_audio_duration(file_path: PathLike) -> float:
         raise RuntimeError(f"Could not get duration using ffprobe, ffmpeg stderr:\n{e.stderr.decode()}")
 
     try:
-        audio_streams = [s for s in metadata["streams"] if s["codec_type"] == "audio"]
-        result = max(float(s.get("duration", 0)) for s in audio_streams)
-        if result == 0:
-            raise RuntimeError("Could not get duration using ffprobe")
-        return result
+        audio_streams = [s for s in metadata["streams"] if s["codec_type"] == "audio" and "duration" in s]
+        if len(audio_streams) == 0:
+            raise RuntimeError("No audio streams with duration found")
+        return max(float(s["duration"]) for s in audio_streams)
     except Exception as e:
-        raise
         logger.warning(f"Could not get longest audio stream duration: {e}")
 
     try:
