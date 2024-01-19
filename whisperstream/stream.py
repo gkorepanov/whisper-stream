@@ -1,23 +1,25 @@
 from typing import Tuple, AsyncIterator, Callable, BinaryIO, Optional
-import os
-from io import BytesIO
-import logging
-from iso639 import Lang
-import openai
-from openai.openai_object import OpenAIObject
 from pathlib import Path
-import pydub
+import os
+import logging
+
+from io import BytesIO
+from iso639 import Lang
+from functools import partial
+
 import asyncio
 from concurrent.futures import Executor
-from functools import partial
+
+import openai
+from openai.openai_object import OpenAIObject
 
 from whisperstream.languages import (
     get_punctuation_prompt_for_lang,
     get_lang_from_name,
-    get_lang_name,
     SUPPORTED_LANGUAGES,
 )
 from whisperstream.error import UnsupportedLanguageError
+from whisperstream.trim import get_audio_duration, trim_audio_and_convert_to_mp3
 
 
 logger = logging.getLogger(__name__)
@@ -55,6 +57,8 @@ async def default_atranscribe_fn(
     *args,
     **kwargs,
 ):
+    if "prompt" in kwargs:
+        kwargs["prompt"] = kwargs["prompt"][-1000:]  # limit prompt to last 1000 chars, which is > OpenAI limit
     return await openai.Audio.atranscribe(
         model=model,
         file=file,
@@ -182,33 +186,32 @@ async def atranscribe_streaming(
             "Please set `force_punctuation` to False"
         )
 
-    path = Path(path)
+    path = Path(path).resolve()
 
     def _f():
-        return pydub.AudioSegment.from_file(str(path))
+        return get_audio_duration(path)
     if executor is not None:
         loop = asyncio.get_running_loop()
-        audio = await loop.run_in_executor(executor, _f)
+        audio_duration = await loop.run_in_executor(executor, _f)
     else:
-        audio = _f()
+        audio_duration = _f()
 
     __transcribe = partial(
         _transcribe,
-        audio=audio,
+        path=path,
         executor=executor,
         atranscribe_fn=atranscribe_fn,
         model=model,
         **kwargs,
     )
 
-    total_len = len(audio)
-    logger.debug(f"Audio len: {total_len}")
+    logger.debug(f"Audio duration: {audio_duration}")
 
     def _get_end(start: int, chunk_index: int) -> int:
-        chunk_size = int(chunk_size_fn(chunk_index) * 1000)
+        chunk_size = chunk_size_fn(chunk_index)
         end = start + chunk_size
-        if (total_len - end) < chunk_size:  # do not make the last chunk too small
-            end = total_len
+        if (audio_duration - end) < chunk_size:  # do not make the last chunk too small
+            end = audio_duration
         return end
 
     start = 0
@@ -223,24 +226,33 @@ async def atranscribe_streaming(
     if language is None:
         language = get_lang_from_name(r.language)
         kwargs['language'] = language.pt1
-        if force_punctuation and not is_punctuation_present(r.text):
+
+    if force_punctuation:
+        if not is_punctuation_present(r.text):
             logger.info(
                 "Punctuation is not present, adding "
-                "prefix to force punctuation"
+                "prefix to force punctuation and restarting transcription"
             )
-            kwargs["prompt"] = get_punctuation_prompt_for_lang(language)
+            kwargs["prompt"] = get_punctuation_prompt_for_lang(language) + " "
             r = await __transcribe(start=start, end=end, **kwargs)
+        else:  # at least capitalize the first letter
+            def _capitalize(text):
+                text = text.lstrip()
+                return text[:1].upper() + text[1:]
+            r.text = _capitalize(r.text)
+            if len(r.segments) > 0:
+                r.segments[0].text = _capitalize(r.segments[0].text)
 
     while True:
         # update seek and start/end times in all segments
         for segment in r.segments:
-            segment.seek += start / 1000
-            segment.start += start / 1000
-            segment.end += start / 1000
+            segment.seek += start
+            segment.start += start
+            segment.end += start
 
         # if we are at the end of the audio, return all segments
         # returned by OpenAI
-        if end >= total_len:
+        if end >= audio_duration:
             yield r
             logger.debug(f"End of audio, yield text: {r.text}")
             return
@@ -263,7 +275,7 @@ async def atranscribe_streaming(
             for _ in range(max_segments_to_skip):
                 logger.debug("Skipping segment")
                 r.segments = r.segments[:-1]
-                if (r.segments[-1].end < (end / 1000)):
+                if (r.segments[-1].end < end):
                     break
                 else:
                     logger.debug("Strange segment end, skipping another segment")
@@ -278,7 +290,7 @@ async def atranscribe_streaming(
                     f"Segment end is greater than chunk end even after "
                     f"discarding {max_segments_to_skip} segments"
                 )
-            start = int(r.segments[-1].end * 1000)
+            start = r.segments[-1].end
             r.text = ''.join(x.text for x in r.segments)
 
         # update prompt with the text returned by OpenAI for the previous chunk
@@ -295,7 +307,7 @@ async def atranscribe_streaming(
 
 async def _transcribe(
     *,
-    audio: pydub.AudioSegment,
+    path: os.PathLike,
     start: int,
     end: int,
     executor: Optional[Executor],
@@ -306,24 +318,22 @@ async def _transcribe(
     logger.debug("Crop audio")
 
     def _f():
-        f = BytesIO()
-        f.name = "voice.mp3"
-        segment = audio[start:end]
-        segment.export(f, format="mp3")
-        f.seek(0)
-        return f
+        return trim_audio_and_convert_to_mp3(path, start, end)
 
     if executor is not None:
         loop = asyncio.get_running_loop()
-        f = await loop.run_in_executor(executor, _f)
+        data = await loop.run_in_executor(executor, _f)
     else:
-        f = _f()
+        data = _f()
+
+    f = BytesIO(data)
+    f.name = "audio.mp3"
 
     logger.debug(f"Transcribe request with start = {start} end = {end}")
     r = await atranscribe_fn(
         model=model,
         file=f,
-        duration_seconds=(end - start) / 1000,
+        duration_seconds=(end - start),
         **kwargs,
     )
     logger.debug("Transcribe request finished")

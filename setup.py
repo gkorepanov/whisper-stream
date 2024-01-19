@@ -17,9 +17,8 @@ setup(
     packages=find_packages(),
     python_requires=">=3.7",
     install_requires=[
-        "openai",
+        "openai==0.28.1",
         "iso639-lang",
-        "pydub",
         "click",
     ],
     entry_points={
