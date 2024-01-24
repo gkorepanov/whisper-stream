@@ -257,40 +257,37 @@ async def atranscribe_streaming(
             logger.debug(f"End of audio, yield text: {r.text}")
             return
 
+        logger.debug(f"{len(r.segments)} segments returned for start = {start} end = {end}:")
+        for segment in r.segments:
+            logger.debug(f"\ttext: {segment.text}")
+            logger.debug(f"\tstart: {segment.start}")
+            logger.debug(f"\tend: {segment.end}")
+
         # if only one segment was returned, we have to continue
         # transcription from the end of the segment
         if len(r.segments) == 0:
-            logger.debug(f"No segments returned for start = {start} end = {end}")
             start = end
         elif len(r.segments) == 1:
-            logger.debug(f"1 segment returned for start = {start} end = {end}")
             start = end
         else:
-            logger.debug(f"{len(r.segments)} segments returned for start = {start} end = {end}")
             # if more than one segment was returned, we discard the last incomplete one
             # and continue transcription from the end of the second to last
             max_segments_to_skip = max(
                 1, len(r.segments) - 1
             )
-            for _ in range(max_segments_to_skip):
-                logger.debug("Skipping segment")
+            for _i in range(max_segments_to_skip):
+                logger.debug(f"Skipping segment -{_i}")
                 r.segments = r.segments[:-1]
                 if (r.segments[-1].end < end):
                     break
                 else:
-                    logger.debug("Strange segment end, skipping another segment")
-                    logger.debug(f"Segment end: {r.segments[-1].end}")
-                    for segment in r.segments:
-                        logger.debug(f"text: {segment.text}")
-                        logger.debug(f"start: {start}")
-                        logger.debug(f"end: {end}")
-                        logger.debug(f"{segment}")
+                    logger.debug(f"Strange segment end {r.segments[-1].end}, skipping it. All segments:")
             else:
-                raise ValueError(
-                    f"Segment end is greater than chunk end even after "
+                logger.warning(
+                    f"Segment end {r.segments[-1].end} is greater than chunk end {end} even after "
                     f"discarding {max_segments_to_skip} segments"
                 )
-            start = r.segments[-1].end
+            start = min(r.segments[-1].end, end)
             r.text = ''.join(x.text for x in r.segments)
 
         # update prompt with the text returned by OpenAI for the previous chunk
@@ -325,6 +322,10 @@ async def _transcribe(
         data = await loop.run_in_executor(executor, _f)
     else:
         data = _f()
+
+    # for debugging
+    # with open(f"debug_{start:.3f}_{end:.3f}.mp3", "wb") as f:
+    #     f.write(data)
 
     f = BytesIO(data)
     f.name = "audio.mp3"
