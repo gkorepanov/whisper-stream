@@ -3,6 +3,8 @@ from os import PathLike
 
 import ffmpeg
 
+from .error import NoAudioStreamsError
+
 
 logger = logging.getLogger(__name__)
 
@@ -60,13 +62,15 @@ def get_audio_duration(file_path: PathLike) -> float:
     except ffmpeg.Error as e:
         raise RuntimeError(f"Could not get duration using ffprobe, ffmpeg stderr:\n{e.stderr.decode()}")
 
-    try:
-        audio_streams = [s for s in metadata["streams"] if s["codec_type"] == "audio" and "duration" in s]
-        if len(audio_streams) == 0:
-            raise RuntimeError("No audio streams with duration found")
+    audio_streams = [s for s in metadata["streams"] if s["codec_type"] == "audio"]
+    if len(audio_streams) == 0:
+        raise NoAudioStreamsError("No audio streams found")
+
+    audio_streams = [s for s in audio_streams if "duration" in s]
+    if len(audio_streams) == 0:
+        logger.warning("No audio streams with duration found")
+    else:
         return max(float(s["duration"]) for s in audio_streams)
-    except Exception as e:
-        logger.warning(f"Could not get longest audio stream duration: {e}")
 
     try:
         return float(metadata["format"]["duration"])
