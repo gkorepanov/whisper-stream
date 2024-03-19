@@ -244,7 +244,7 @@ async def atranscribe_streaming(
                 return text[:1].upper() + text[1:]
             r.text = _capitalize(r.text)
             if len(r.segments) > 0:
-                r.segments[0].text = _capitalize(r.segments[0].text)
+                r.segments[0]["text"] = _capitalize(r.segments[0]["text"])
 
     while True:
         # update seek and start/end times in all segments
