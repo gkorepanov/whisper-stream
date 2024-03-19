@@ -291,7 +291,7 @@ async def atranscribe_streaming(
                     f"discarding {max_segments_to_skip} segments"
                 )
             start = min(r.segments[-1]["end"], end)
-            r.text = ''.join(x.text for x in r.segments)
+            r.text = ''.join(x["text"] for x in r.segments)
 
         # update prompt with the text returned by OpenAI for the previous chunk
         # to produce coherent transcription
