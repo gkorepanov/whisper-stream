@@ -11,7 +11,8 @@ import asyncio
 from concurrent.futures import Executor
 
 import openai
-from openai.openai_object import OpenAIObject
+from openai import AsyncOpenAI
+from openai.types.audio import Transcription
 
 from whisperstream.languages import (
     get_punctuation_prompt_for_lang,
@@ -56,10 +57,12 @@ async def default_atranscribe_fn(
     duration_seconds: float,
     *args,
     **kwargs,
-):
+) -> Transcription:
     if "prompt" in kwargs:
         kwargs["prompt"] = kwargs["prompt"][-1000:]  # limit prompt to last 1000 chars, which is > OpenAI limit
-    return await openai.Audio.atranscribe(
+    api_key = kwargs.pop("api_key", openai.api_key)
+    client = AsyncOpenAI(api_key=api_key)
+    return await client.audio.transcriptions.create(
         model=model,
         file=file,
         *args,
@@ -71,12 +74,12 @@ async def atranscribe_streaming_simple(
     path: os.PathLike,
     model: str = 'whisper-1',
     chunk_size_fn: Callable[[int], int] = default_chunk_size_fn,
-    atranscribe_fn: Callable[..., OpenAIObject] = default_atranscribe_fn,
+    atranscribe_fn: Callable[..., Transcription] = default_atranscribe_fn,
     language: Optional[Lang] = None,
     executor: Optional[Executor] = None,
     force_punctuation: bool = False,
     **kwargs,
-) -> Tuple[Lang, AsyncIterator[OpenAIObject]]:
+) -> Tuple[Lang, AsyncIterator[Transcription]]:
     """High level wrapper for streaming tracription with simple interface.
 
     Args:
@@ -123,7 +126,7 @@ async def atranscribe_streaming_simple(
 
     # remove leading spaces from first segment
     if len(first_elem.segments) > 0:
-        first_elem.segments[0].text = first_elem.segments[0].text.lstrip()
+        first_elem.segments[0]["text"] = first_elem.segments[0]["text"].lstrip()
 
     async def _gen():
         for segment in first_elem.segments:
@@ -139,12 +142,12 @@ async def atranscribe_streaming(
     path: os.PathLike,
     model: str = 'whisper-1',
     chunk_size_fn: Callable[[int], int] = default_chunk_size_fn,
-    atranscribe_fn: Callable[..., OpenAIObject] = default_atranscribe_fn,
+    atranscribe_fn: Callable[..., Transcription] = default_atranscribe_fn,
     language: Optional[Lang] = None,
     executor: Optional[Executor] = None,
     force_punctuation: bool = False,
     **kwargs,
-) -> AsyncIterator[OpenAIObject]:
+) -> AsyncIterator[Transcription]:
     """Low level OpenAI Whisper API wrapper for streaming transcription.
 
     Args:
@@ -246,9 +249,9 @@ async def atranscribe_streaming(
     while True:
         # update seek and start/end times in all segments
         for segment in r.segments:
-            segment.seek += start
-            segment.start += start
-            segment.end += start
+            segment["seek"] += start
+            segment["start"] += start
+            segment["end"] += start
 
         # if we are at the end of the audio, return all segments
         # returned by OpenAI
@@ -259,9 +262,9 @@ async def atranscribe_streaming(
 
         logger.debug(f"{len(r.segments)} segments returned for start = {start} end = {end}:")
         for segment in r.segments:
-            logger.debug(f"\ttext: {segment.text}")
-            logger.debug(f"\tstart: {segment.start}")
-            logger.debug(f"\tend: {segment.end}")
+            logger.debug(f"\ttext: {segment['text']}")
+            logger.debug(f"\tstart: {segment['start']}")
+            logger.debug(f"\tend: {segment['end']}")
 
         # if only one segment was returned, we have to continue
         # transcription from the end of the segment
@@ -278,16 +281,16 @@ async def atranscribe_streaming(
             for _i in range(max_segments_to_skip):
                 logger.debug(f"Skipping segment -{_i}")
                 r.segments = r.segments[:-1]
-                if (r.segments[-1].end < end):
+                if (r.segments[-1]["end"] < end):
                     break
                 else:
-                    logger.debug(f"Strange segment end {r.segments[-1].end}, skipping it. All segments:")
+                    logger.debug(f"Strange segment end {r.segments[-1]['end']}, skipping it. All segments:")
             else:
                 logger.warning(
-                    f"Segment end {r.segments[-1].end} is greater than chunk end {end} even after "
+                    f"Segment end {r.segments[-1]['end']} is greater than chunk end {end} even after "
                     f"discarding {max_segments_to_skip} segments"
                 )
-            start = min(r.segments[-1].end, end)
+            start = min(r.segments[-1]["end"], end)
             r.text = ''.join(x.text for x in r.segments)
 
         # update prompt with the text returned by OpenAI for the previous chunk
@@ -308,10 +311,10 @@ async def _transcribe(
     start: int,
     end: int,
     executor: Optional[Executor],
-    atranscribe_fn: Callable[..., OpenAIObject],
+    atranscribe_fn: Callable[..., Transcription],
     model: str,
     **kwargs,
-) -> OpenAIObject:
+) -> Transcription:
     logger.debug("Crop audio")
 
     def _f():

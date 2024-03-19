@@ -1,4 +1,0 @@
-openai==0.28.1
-iso639-lang
-click
-ffmpeg-python

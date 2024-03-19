@@ -7,7 +7,7 @@ long_description = (here / "README.md").read_text(encoding="utf-8")
 
 setup(
     name="whisperstream",
-    version="0.1.0",
+    version="0.1.1",
     description="Thin wrapper around OpenAI Whisper API enabling streaming transcription",
     long_description=long_description,  # Optional
     long_description_content_type="text/markdown",
@@ -17,9 +17,9 @@ setup(
     packages=find_packages(),
     python_requires=">=3.7",
     install_requires=[
-        "openai==0.28.1",
-        "iso639-lang",
-        "click",
+        "openai~=1.13.3",
+        "iso639-lang~=2.2.2",
+        "click~=8.1.7",
     ],
     entry_points={
         'console_scripts': [
