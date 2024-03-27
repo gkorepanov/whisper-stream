@@ -23,10 +23,10 @@ def trim_audio_and_convert_to_mp3(input_file: PathLike, start: float, end: float
     bytes: MP3 data of the specified segment.
     """
     duration = end - start
-    input_stream = ffmpeg.input(str(input_file), ss=start, t=duration)
+    input_stream = ffmpeg.input(str(input_file), ss=start, t=duration).audio
 
     def make_output_stream(stream: ffmpeg.Stream) -> ffmpeg.Stream:
-        return stream.output('pipe:', format='mp3', acodec='libmp3lame', ab='128k')
+        return stream.output('pipe:', format='mp3', acodec='libmp3lame', ab='128k', map_metadata="-1")
 
     stream_options = [
         make_output_stream(input_stream),
