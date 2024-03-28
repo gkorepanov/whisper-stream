@@ -3,3 +3,6 @@ class UnsupportedLanguageError(ValueError):
 
 class NoAudioStreamsError(ValueError):
     pass
+
+class AudioTrimError(RuntimeError):
+    pass

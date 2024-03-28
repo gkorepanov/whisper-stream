@@ -3,7 +3,7 @@ from os import PathLike
 
 import ffmpeg
 
-from .error import NoAudioStreamsError
+from .error import NoAudioStreamsError, AudioTrimError
 
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,9 @@ def trim_audio_and_convert_to_mp3(input_file: PathLike, start: float, end: float
     at_least_some_data = b""
     for stream in stream_options:
         try:
-            out, _ = stream.run(capture_stdout=True, capture_stderr=True)
+            out, err = stream.run(capture_stdout=True, capture_stderr=True)
+            if b"nothing was encoded" in err:
+                raise AudioTrimError(f"ffmpeg reported that nothing was encoded for trim from {start:.2f} to {end:.2f}")
             return out
         except ffmpeg.Error as e:
             out = e.stdout

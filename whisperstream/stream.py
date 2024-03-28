@@ -19,7 +19,7 @@ from whisperstream.languages import (
     get_lang_from_name,
     SUPPORTED_LANGUAGES,
 )
-from whisperstream.error import UnsupportedLanguageError
+from whisperstream.error import UnsupportedLanguageError, AudioTrimError
 from whisperstream.trim import get_audio_duration, trim_audio_and_convert_to_mp3
 
 
@@ -46,7 +46,7 @@ def default_chunk_size_fn(index: int) -> int:
 def is_punctuation_present(text: str) -> bool:
     if not any(i.isupper() for i in text):
         return False
-    if not any(i in "!(),.:;?" for i in text):
+    if not any(i in "!?." for i in text):
         return False
     return True
 
@@ -78,6 +78,7 @@ async def atranscribe_streaming_simple(
     language: Optional[Lang] = None,
     executor: Optional[Executor] = None,
     force_punctuation: bool = False,
+    ignore_trim_errors_if_first_request_was_successful: bool = True,
     **kwargs,
 ) -> Tuple[Lang, AsyncIterator[Transcription]]:
     """High level wrapper for streaming tracription with simple interface.
@@ -119,6 +120,7 @@ async def atranscribe_streaming_simple(
         language=language,
         executor=executor,
         force_punctuation=force_punctuation,
+        ignore_trim_errors_if_first_request_was_successful=ignore_trim_errors_if_first_request_was_successful,
         **kwargs,
     )
     it = gen.__aiter__()
@@ -146,6 +148,7 @@ async def atranscribe_streaming(
     language: Optional[Lang] = None,
     executor: Optional[Executor] = None,
     force_punctuation: bool = False,
+    ignore_trim_errors_if_first_request_was_successful: bool = True,
     **kwargs,
 ) -> AsyncIterator[Transcription]:
     """Low level OpenAI Whisper API wrapper for streaming transcription.
@@ -239,12 +242,13 @@ async def atranscribe_streaming(
             kwargs["prompt"] = get_punctuation_prompt_for_lang(language) + " "
             r = await __transcribe(start=start, end=end, **kwargs)
         else:  # at least capitalize the first letter
-            def _capitalize(text):
-                text = text.lstrip()
-                return text[:1].upper() + text[1:]
-            r.text = _capitalize(r.text)
+            r.text = capitalize(r.text)
             if len(r.segments) > 0:
-                r.segments[0]["text"] = _capitalize(r.segments[0]["text"])
+                r.segments[0]["text"] = capitalize(r.segments[0]["text"])
+
+    prompt_parts = []
+    if (_prompt := kwargs.get("prompt", "").strip()):
+        prompt_parts.append(_prompt)
 
     while True:
         # update seek and start/end times in all segments
@@ -265,6 +269,9 @@ async def atranscribe_streaming(
             logger.debug(f"\ttext: {segment['text']}")
             logger.debug(f"\tstart: {segment['start']}")
             logger.debug(f"\tend: {segment['end']}")
+
+        # filtering
+        r.segments = [x for x in r.segments if x["no_speech_prob"] < 0.9]
 
         # if only one segment was returned, we have to continue
         # transcription from the end of the segment
@@ -295,14 +302,30 @@ async def atranscribe_streaming(
 
         # update prompt with the text returned by OpenAI for the previous chunk
         # to produce coherent transcription
-        kwargs["prompt"] = kwargs.get("prompt", "") + r.text
+        new_prompt = r.text
+        if force_punctuation and not is_punctuation_present(new_prompt[-100:]):
+            new_prompt = update_prompt_with_punctuation(new_prompt)
+        new_prompt = new_prompt.replace("...", ".")  # avoid teaching the model to use "..."
+        prompt_parts.append(new_prompt)
+        kwargs["prompt"] = " ".join(x.strip() for x in prompt_parts)
 
         yield r
         logger.debug(f"Yield text: {r.text}")
 
         chunk_index += 1
         end = _get_end(start, chunk_index)
-        r = await __transcribe(start=start, end=end, **kwargs)
+        try:
+            r = await __transcribe(start=start, end=end, **kwargs)
+        except AudioTrimError:
+            if ignore_trim_errors_if_first_request_was_successful:
+                logger.warning("Ignoring AudioTrimError because the first request was successful")
+                class FakeTranscription():
+                    def __init__(self):
+                        self.segments = []
+                        self.text = ""
+                r = FakeTranscription()
+            else:
+                raise
 
 
 async def _transcribe(
@@ -342,3 +365,20 @@ async def _transcribe(
     )
     logger.debug("Transcribe request finished")
     return r
+
+
+def update_prompt_with_punctuation(prompt: str) -> str:
+    if "," in prompt[-100:]:
+        symbol_to_replace = ","
+    elif " " in prompt[-100:]:
+        symbol_to_replace = " "
+    else:
+        return prompt  # dunno what to do
+    pos = prompt.rindex(symbol_to_replace)
+    result = prompt[:pos].strip() + ". " + capitalize(prompt[pos + 1:].strip())
+    return result
+
+
+def capitalize(text):
+    text = text.lstrip()
+    return text[:1].upper() + text[1:]
