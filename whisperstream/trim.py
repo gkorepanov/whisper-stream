@@ -1,5 +1,6 @@
 import logging
 from os import PathLike
+import re
 
 import ffmpeg
 
@@ -60,6 +61,14 @@ def trim_audio_and_convert_to_mp3(input_file: PathLike, start: float, end: float
 
 def get_audio_duration(file_path: PathLike) -> float:
     try:
+        return get_audio_duration_ffprobe(file_path)
+    except Exception as e:
+        logger.warning(f"Error getting audio duration using ffprobe: {e}")
+        return get_audio_duration_decode(file_path)
+
+
+def get_audio_duration_ffprobe(file_path: PathLike) -> float:
+    try:
         metadata = ffmpeg.probe(str(file_path))
     except ffmpeg.Error as e:
         raise RuntimeError(f"Could not get duration using ffprobe, ffmpeg stderr:\n{e.stderr.decode()}")
@@ -78,3 +87,19 @@ def get_audio_duration(file_path: PathLike) -> float:
         return float(metadata["format"]["duration"])
     except Exception as e:
         raise RuntimeError(f"Could not get duration using ffprobe") from e
+
+def get_audio_duration_decode(file_path: PathLike) -> float:
+    stream = ffmpeg.input(str(file_path))
+    output = stream.output('pipe:', format='null', vn=None, threads=1)
+    try:
+        out, err = output.run(capture_stdout=True, capture_stderr=True)
+    except ffmpeg.Error as e:
+        err = e.stderr
+    time_matches = re.findall(r"time=(\d+):(\d+):(\d+\.\d+)", err.decode())
+
+    if time_matches:
+        last_time_match = time_matches[-1]
+        hours, minutes, seconds = last_time_match
+        return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+    else:
+        raise RuntimeError(f"Could not get duration using ffmpeg decode, ffmpeg stderr:\n{err.decode()}")
