@@ -79,6 +79,7 @@ async def atranscribe_streaming_simple(
     executor: Optional[Executor] = None,
     force_punctuation: bool = False,
     ignore_trim_errors_if_first_request_was_successful: bool = True,
+    ignore_segments_with_no_speech_probability: float = 1.0,
     **kwargs,
 ) -> Tuple[Lang, AsyncIterator[Transcription]]:
     """High level wrapper for streaming tracription with simple interface.
@@ -100,6 +101,12 @@ async def atranscribe_streaming_simple(
         executor: (Optional[Executor], optional): Executor used to run blocking code.
         force_punctuation: (bool, optional): Locates rare cases of missed punctuation
             and forces it if necessary
+        ignore_trim_errors_if_first_request_was_successful (bool): If during streaming,
+            some pieces of audio are incorrect/empty/faulty after trimming (usually at
+            the end of the audio due to incorrect duration determined), ignore them
+            (in case there is at least single successful chunk). Defaults to True.
+        ignore_segments_with_no_speech_probability (float): If < 1.0, ignores segments
+            with predicted `no_speech_probability` > than provided value. Defaults to 1.0.
         kwargs: Additional arguments for OpenAI API
 
     Returns:
@@ -121,6 +128,7 @@ async def atranscribe_streaming_simple(
         executor=executor,
         force_punctuation=force_punctuation,
         ignore_trim_errors_if_first_request_was_successful=ignore_trim_errors_if_first_request_was_successful,
+        ignore_segments_with_no_speech_probability=ignore_segments_with_no_speech_probability,
         **kwargs,
     )
     it = gen.__aiter__()
@@ -149,6 +157,7 @@ async def atranscribe_streaming(
     executor: Optional[Executor] = None,
     force_punctuation: bool = False,
     ignore_trim_errors_if_first_request_was_successful: bool = True,
+    ignore_segments_with_no_speech_probability: float = 1.0,
     **kwargs,
 ) -> AsyncIterator[Transcription]:
     """Low level OpenAI Whisper API wrapper for streaming transcription.
@@ -170,6 +179,12 @@ async def atranscribe_streaming(
         executor: (Optional[Executor], optional): Executor used to run blocking code.
         force_punctuation: (bool, optional): Locates rare cases of missed punctuation
             and forces it if necessary.
+        ignore_trim_errors_if_first_request_was_successful (bool): If during streaming,
+            some pieces of audio are incorrect/empty/faulty after trimming (usually at
+            the end of the audio due to incorrect duration determined), ignore them
+            (in case there is at least single successful chunk). Defaults to True.
+        ignore_segments_with_no_speech_probability (float): If < 1.0, ignores segments
+            with predicted `no_speech_probability` > than provided value. Defaults to 1.0.
         kwargs: Additional arguments for OpenAI API
 
     Returns:
@@ -257,13 +272,6 @@ async def atranscribe_streaming(
             segment["start"] += start
             segment["end"] += start
 
-        # if we are at the end of the audio, return all segments
-        # returned by OpenAI
-        if end >= audio_duration:
-            yield r
-            logger.debug(f"End of audio, yield text: {r.text}")
-            return
-
         logger.debug(f"{len(r.segments)} segments returned for start = {start} end = {end}:")
         for segment in r.segments:
             logger.debug(f"\ttext: {segment['text']}")
@@ -271,7 +279,18 @@ async def atranscribe_streaming(
             logger.debug(f"\tend: {segment['end']}")
 
         # filtering
-        r.segments = [x for x in r.segments if x["no_speech_prob"] < 0.9]
+        if ignore_segments_with_no_speech_probability < 1.0:
+            r.segments = [
+                x for x in r.segments
+                if x.get("no_speech_prob", 0.0) <= ignore_segments_with_no_speech_probability
+            ]
+
+        # if we are at the end of the audio, return all segments
+        # returned by OpenAI
+        if end >= audio_duration:
+            yield r
+            logger.debug(f"End of audio, yield text: {r.text}")
+            return
 
         # if only one segment was returned, we have to continue
         # transcription from the end of the segment
