@@ -20,7 +20,7 @@ from whisperstream.languages import (
     SUPPORTED_LANGUAGES,
 )
 from whisperstream.error import UnsupportedLanguageError, AudioTrimError
-from whisperstream.trim import get_audio_duration, trim_audio_and_convert_to_mp3
+from whisperstream.trim import get_audio_duration, trim_audio_and_convert
 
 
 logger = logging.getLogger(__name__)
@@ -80,6 +80,8 @@ async def atranscribe_streaming_simple(
     force_punctuation: bool = False,
     ignore_trim_errors_if_first_request_was_successful: bool = True,
     ignore_segments_with_no_speech_probability: float = 1.0,
+    start: float = 0.0,
+    end: Optional[float] = None,
     **kwargs,
 ) -> Tuple[Lang, AsyncIterator[Transcription]]:
     """High level wrapper for streaming tracription with simple interface.
@@ -129,6 +131,8 @@ async def atranscribe_streaming_simple(
         force_punctuation=force_punctuation,
         ignore_trim_errors_if_first_request_was_successful=ignore_trim_errors_if_first_request_was_successful,
         ignore_segments_with_no_speech_probability=ignore_segments_with_no_speech_probability,
+        start=start,
+        end=end,
         **kwargs,
     )
     it = gen.__aiter__()
@@ -158,6 +162,8 @@ async def atranscribe_streaming(
     force_punctuation: bool = False,
     ignore_trim_errors_if_first_request_was_successful: bool = True,
     ignore_segments_with_no_speech_probability: float = 1.0,
+    start: float = 0.0,
+    end: Optional[float] = None,
     **kwargs,
 ) -> AsyncIterator[Transcription]:
     """Low level OpenAI Whisper API wrapper for streaming transcription.
@@ -217,6 +223,8 @@ async def atranscribe_streaming(
     else:
         audio_duration = _f()
 
+    audio_duration = min(audio_duration, end) if end is not None else audio_duration
+
     __transcribe = partial(
         _transcribe,
         path=path,
@@ -235,7 +243,6 @@ async def atranscribe_streaming(
             end = audio_duration
         return end
 
-    start = 0
     chunk_index = 0
     end = _get_end(start, chunk_index)
 
@@ -335,9 +342,9 @@ async def atranscribe_streaming(
         end = _get_end(start, chunk_index)
         try:
             r = await __transcribe(start=start, end=end, **kwargs)
-        except AudioTrimError:
+        except AudioTrimError as e:
             if ignore_trim_errors_if_first_request_was_successful:
-                logger.warning("Ignoring AudioTrimError because the first request was successful")
+                logger.warning(f"Ignoring AudioTrimError because the first request was successful, error: {str(e)}")
                 class FakeTranscription():
                     def __init__(self):
                         self.segments = []
@@ -360,7 +367,7 @@ async def _transcribe(
     logger.debug("Crop audio")
 
     def _f():
-        return trim_audio_and_convert_to_mp3(path, start, end)
+        return trim_audio_and_convert(path, start, end)
 
     if executor is not None:
         loop = asyncio.get_running_loop()
@@ -369,11 +376,11 @@ async def _transcribe(
         data = _f()
 
     # for debugging
-    # with open(f"debug_{start:.3f}_{end:.3f}.mp3", "wb") as f:
+    # with open(f"debug_{start:.3f}_{end:.3f}.wav", "wb") as f:
     #     f.write(data)
 
     f = BytesIO(data)
-    f.name = "audio.mp3"
+    f.name = "audio.wav"
 
     logger.debug(f"Transcribe request with start = {start} end = {end}")
     r = await atranscribe_fn(

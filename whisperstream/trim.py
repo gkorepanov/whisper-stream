@@ -10,7 +10,7 @@ from .error import NoAudioStreamsError, AudioTrimError
 logger = logging.getLogger(__name__)
 
 
-def trim_audio_and_convert_to_mp3(input_file: PathLike, start: float, end: float) -> bytes:
+def trim_audio_and_convert(input_file: PathLike, start: float, end: float) -> bytes:
     """
     Convert a segment of an audio or video file to MP3 format and return as bytes.
     The segment is specified by start and end times in seconds.
@@ -24,10 +24,12 @@ def trim_audio_and_convert_to_mp3(input_file: PathLike, start: float, end: float
     bytes: MP3 data of the specified segment.
     """
     duration = end - start
+    assert start >= 0, f"Start time must be non-negative, got {start}"
+    assert duration > 0, f"Duration must be positive, got {duration}"
     input_stream = ffmpeg.input(str(input_file), ss=start, t=duration).audio
 
     def make_output_stream(stream: ffmpeg.Stream) -> ffmpeg.Stream:
-        return stream.output('pipe:', format='mp3', acodec='libmp3lame', ab='128k', map_metadata="-1")
+        return stream.output('pipe:', format="wav", ar='16000', ac="1", map_metadata="-1")
 
     stream_options = [
         make_output_stream(input_stream),
