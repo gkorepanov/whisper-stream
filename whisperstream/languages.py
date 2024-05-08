@@ -75,12 +75,16 @@ def get_lang_name(lang: Lang) -> str:
 
 def get_lang_from_name(name: str) -> Lang:
     if not name:
-        raise UnsupportedLanguageError("Language name cannot be empty.")
+        raise UnsupportedLanguageError("Language name cannot be empty")
+    name = name.strip()
+    try:
+        return Lang(name)
+    except Exception:
+        pass
     try:
         return _NAME_TO_LANG[name.capitalize()]
     except KeyError:
         raise UnsupportedLanguageError(f"Language {name} is not supported.")
-
 
 PUNCTUATION_PROMPTS_BY_LANG = {
     'af': "Wel, wat wou ek sê? Kom ons begin.",
