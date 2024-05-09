@@ -20,6 +20,7 @@ setup(
         "openai~=1.13.3",
         "iso639-lang~=2.2.2",
         "click~=8.1.7",
+        "ffmpeg-python~=0.2.0",
     ],
     entry_points={
         'console_scripts': [
