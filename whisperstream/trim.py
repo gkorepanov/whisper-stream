@@ -25,11 +25,11 @@ def trim_audio_and_convert(input_file: PathLike, start: float = 0.0, end: Option
     Returns:
     bytes: MP3 data of the specified segment.
     """
-    duration = end - start
     assert start >= 0, f"Start time must be non-negative, got {start}"
-    assert duration > 0, f"Duration must be positive, got {duration}"
     kwargs = {}
     if end is not None:
+        duration = end - start
+        assert duration > 0, f"Duration must be positive, got {duration}"
         kwargs["t"] = duration
     if start > 0:
         kwargs["ss"] = start
