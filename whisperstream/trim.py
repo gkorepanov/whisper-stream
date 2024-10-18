@@ -65,7 +65,7 @@ def trim_audio_and_convert(
         try:
             out, err = stream.run(capture_stdout=True, capture_stderr=True)
             if b"nothing was encoded" in err:
-                raise AudioTrimError(f"ffmpeg reported that nothing was encoded for trim from {start:.2f} to {end:.2f}")
+                raise AudioTrimError(f"ffmpeg reported that nothing was encoded for trim from {start} to {end}")
             return out
         except ffmpeg.Error as e:
             out = e.stdout
