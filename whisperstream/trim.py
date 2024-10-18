@@ -14,10 +14,10 @@ logger = logging.getLogger(__name__)
 
 def trim_audio_and_convert(
     input_file: PathLike,
-    output_file: Optional[PathLike] = None,
     start: float = 0.0,
     end: Optional[float] = None,
     audio_format: Literal["wav", "mp3"] = "wav",
+    output_file: Optional[PathLike] = None,
 ) -> bytes:
     """
     Convert a segment of an audio or video file to MP3 format and return as bytes.
