@@ -1,3 +1,5 @@
+from typing import Optional
+
 import logging
 from os import PathLike
 import re
@@ -10,7 +12,7 @@ from .error import NoAudioStreamsError, AudioTrimError
 logger = logging.getLogger(__name__)
 
 
-def trim_audio_and_convert(input_file: PathLike, start: float, end: float) -> bytes:
+def trim_audio_and_convert(input_file: PathLike, start: float = 0.0, end: Optional[float] = None) -> bytes:
     """
     Convert a segment of an audio or video file to MP3 format and return as bytes.
     The segment is specified by start and end times in seconds.
@@ -26,7 +28,12 @@ def trim_audio_and_convert(input_file: PathLike, start: float, end: float) -> by
     duration = end - start
     assert start >= 0, f"Start time must be non-negative, got {start}"
     assert duration > 0, f"Duration must be positive, got {duration}"
-    input_stream = ffmpeg.input(str(input_file), ss=start, t=duration).audio
+    kwargs = {}
+    if end is not None:
+        kwargs["t"] = duration
+    if start > 0:
+        kwargs["ss"] = start
+    input_stream = ffmpeg.input(str(input_file), **kwargs).audio
 
     def make_output_stream(stream: ffmpeg.Stream) -> ffmpeg.Stream:
         return stream.output('pipe:', format="wav", ar='16000', ac="1", map_metadata="-1")
