@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Literal
 
 import logging
 from os import PathLike
@@ -12,18 +12,26 @@ from .error import NoAudioStreamsError, AudioTrimError
 logger = logging.getLogger(__name__)
 
 
-def trim_audio_and_convert(input_file: PathLike, start: float = 0.0, end: Optional[float] = None) -> bytes:
+def trim_audio_and_convert(
+    input_file: PathLike,
+    output_file: Optional[PathLike] = None,
+    start: float = 0.0,
+    end: Optional[float] = None,
+    audio_format: Literal["wav", "mp3"] = "wav",
+) -> bytes:
     """
     Convert a segment of an audio or video file to MP3 format and return as bytes.
     The segment is specified by start and end times in seconds.
 
     Args:
-    input_file (str): Path to the input file.
-    start (float): Start time of the segment in seconds.
-    end (float): End time of the segment in seconds.
+        input_file (str): Path to the input file.
+        output_file (str): Path to the output file, if None, will return bytes.
+        start (float): Start time of the segment in seconds.
+        end (float): End time of the segment in seconds.
+        audio_format (Literal["wav", "mp3"]): Audio format to convert to.
 
     Returns:
-    bytes: MP3 data of the specified segment.
+        bytes: MP3 data of the specified segment.
     """
     assert start >= 0, f"Start time must be non-negative, got {start}"
     kwargs = {}
@@ -35,12 +43,21 @@ def trim_audio_and_convert(input_file: PathLike, start: float = 0.0, end: Option
         kwargs["ss"] = start
     input_stream = ffmpeg.input(str(input_file), **kwargs).audio
 
-    def make_output_stream(stream: ffmpeg.Stream) -> ffmpeg.Stream:
-        return stream.output('pipe:', format="wav", ar='16000', ac="1", map_metadata="-1")
+    def make_output_stream(stream: ffmpeg.Stream, output_file: Optional[PathLike]) -> ffmpeg.Stream:
+        if audio_format == "wav":
+            kwargs = {"format": "wav", "ar": "16000", "ac": "1", "map_metadata": "-1"}
+        elif audio_format == "mp3":
+            kwargs = {"format": "mp3", "acodec": "libmp3lame", "ab": "128k", "map_metadata": "-1"}
+        else:
+            raise ValueError(f"Unknown audio format: {audio_format}")
+        if output_file is not None:
+            return stream.output(str(output_file), **kwargs)
+        else:
+            return stream.output('pipe:', **kwargs)
 
     stream_options = [
-        make_output_stream(input_stream),
-        make_output_stream(input_stream.filter("aresample", min_hard_comp="0.100000", first_pts="0", **{"async": "1"}))
+        make_output_stream(input_stream, output_file),
+        make_output_stream(input_stream.filter("aresample", min_hard_comp="0.100000", first_pts="0", **{"async": "1"}), output_file),
     ]
 
     at_least_some_data = b""
