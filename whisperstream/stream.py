@@ -140,7 +140,7 @@ async def atranscribe_streaming_simple(
 
     # remove leading spaces from first segment
     if len(first_elem.segments) > 0:
-        first_elem.segments[0]["text"] = first_elem.segments[0]["text"].lstrip()
+        first_elem.segments[0].text = first_elem.segments[0].text.lstrip()
 
     async def _gen():
         for segment in first_elem.segments:
@@ -266,7 +266,7 @@ async def atranscribe_streaming(
         else:  # at least capitalize the first letter
             r.text = capitalize(r.text)
             if len(r.segments) > 0:
-                r.segments[0]["text"] = capitalize(r.segments[0]["text"])
+                r.segments[0].text = capitalize(r.segments[0].text)
 
     prompt_parts = []
     if (_prompt := kwargs.get("prompt", "").strip()):
@@ -275,21 +275,21 @@ async def atranscribe_streaming(
     while True:
         # update seek and start/end times in all segments
         for segment in r.segments:
-            segment["seek"] += start
-            segment["start"] += start
-            segment["end"] += start
+            segment.seek += start
+            segment.start += start
+            segment.end += start
 
         logger.debug(f"{len(r.segments)} segments returned for start = {start} end = {end}:")
         for segment in r.segments:
-            logger.debug(f"\ttext: {segment['text']}")
-            logger.debug(f"\tstart: {segment['start']}")
-            logger.debug(f"\tend: {segment['end']}")
+            logger.debug(f"\ttext: {segment.text}")
+            logger.debug(f"\tstart: {segment.start}")
+            logger.debug(f"\tend: {segment.end}")
 
         # filtering
         if ignore_segments_with_no_speech_probability < 1.0:
             r.segments = [
                 x for x in r.segments
-                if x.get("no_speech_prob", 0.0) <= ignore_segments_with_no_speech_probability
+                if getattr(x, "no_speech_prob", 0.0) <= ignore_segments_with_no_speech_probability
             ]
 
         # if we are at the end of the audio, return all segments
@@ -314,17 +314,17 @@ async def atranscribe_streaming(
             for _i in range(max_segments_to_skip):
                 logger.debug(f"Skipping segment -{_i}")
                 r.segments = r.segments[:-1]
-                if (r.segments[-1]["end"] < end):
+                if (r.segments[-1].end < end):
                     break
                 else:
-                    logger.debug(f"Strange segment end {r.segments[-1]['end']}, skipping it. All segments:")
+                    logger.debug(f"Strange segment end {r.segments[-1].end}, skipping it. All segments:")
             else:
                 logger.warning(
-                    f"Segment end {r.segments[-1]['end']} is greater than chunk end {end} even after "
+                    f"Segment end {r.segments[-1].end} is greater than chunk end {end} even after "
                     f"discarding {max_segments_to_skip} segments"
                 )
-            start = min(r.segments[-1]["end"], end)
-            r.text = ''.join(x["text"] for x in r.segments)
+            start = min(r.segments[-1].end, end)
+            r.text = ''.join(x.text for x in r.segments)
 
         # update prompt with the text returned by OpenAI for the previous chunk
         # to produce coherent transcription
