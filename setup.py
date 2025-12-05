@@ -17,7 +17,7 @@ setup(
     packages=find_packages(),
     python_requires=">=3.7",
     install_requires=[
-        "openai>=1.30.4,<2.0.0",
+        "openai>=1.30.4,<3.0.0",
         "iso639-lang~=2.2.2",
         "click~=8.1.7",
         "ffmpeg-python~=0.2.0",
